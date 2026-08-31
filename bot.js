@@ -3,7 +3,7 @@ const http = require('http');
 const { google } = require('googleapis');
 const path = require('path');
 
-// ID de la planilla que se ve en tu captura de pantalla
+// PLANILLA ORIGEN
 const SPREADSHEET_ID = '1l06xCPah3B1AdyXzLu7ILoyBINCMI8fFze8ug7bOGls';
 
 const auth = new google.auth.GoogleAuth({
@@ -14,7 +14,7 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: 'v4', auth });
 
 async function ejecutarBot(listaCodigosActivos = []) {
-  console.log("🚀 Bot iniciado...");
+  console.log("🚀 Iniciando extracción de SGA...");
 
   let codigosAProcesar = listaCodigosActivos.map(item => {
     if (typeof item === 'object' && item !== null) {
@@ -24,27 +24,13 @@ async function ejecutarBot(listaCodigosActivos = []) {
   }).filter(Boolean);
 
   try {
-    // Si no vinieron códigos desde el botón, los lee de 'buscar_codigo'
     if (codigosAProcesar.length === 0) {
-      console.log("📖 Leyendo directamente de la pestaña buscar_codigo...");
-      const resEntrada = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: 'buscar_codigo!A2:A',
-      });
-      const filas = resEntrada.data.values || [];
-      codigosAProcesar = filas.flat().map(c => String(c).trim()).filter(Boolean);
+      return { status: "OK", guardadosSheets: 0, message: "No se recibieron códigos." };
     }
 
-    console.log(`📌 Códigos a procesar: ${codigosAProcesar.length}`);
-
-    if (codigosAProcesar.length === 0) {
-      return { status: "OK", guardadosSheets: 0, message: "No hay códigos para procesar." };
-    }
-
-    // 1. Extraer datos del SGA
+    // 1. Lanzar navegador con Playwright
     const browser = await chromium.launch({
       headless: true,
-      channel: 'chromium',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
@@ -57,7 +43,7 @@ async function ejecutarBot(listaCodigosActivos = []) {
     const fechaHora = `${ahora.getDate().toString().padStart(2, '0')}/${(ahora.getMonth() + 1).toString().padStart(2, '0')} ${ahora.getHours().toString().padStart(2, '0')}:${ahora.getMinutes().toString().padStart(2, '0')}`;
 
     for (const codigo of codigosAProcesar) {
-      console.log(`🔎 Consultando SGA para: ${codigo}`);
+      console.log(`🔎 SGA: Consultando ${codigo}...`);
 
       const input = page.locator('input:visible').first();
       await input.fill('');
@@ -77,13 +63,14 @@ async function ejecutarBot(listaCodigosActivos = []) {
         }
       }
 
+      // Estructura: Columna A (Fecha/Hora), Columna B (Código), Columna C (Confirmados)
       filasAEscribir.push([fechaHora, codigo, confirmados]);
     }
 
     await browser.close();
 
-    // 2. Escribir en la pestaña 'evolucion'
-    console.log("✍️ Guardando en la pestaña 'evolucion'...");
+    // 2. Insertar directamente en la pestaña 'evolucion' desde la Columna A
+    console.log("✍️ Guardando filas en la pestaña 'evolucion'...");
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: 'evolucion!A:C',
@@ -98,7 +85,7 @@ async function ejecutarBot(listaCodigosActivos = []) {
     };
 
   } catch (error) {
-    console.error("❌ Error:", error);
+    console.error("❌ Error en servidor:", error);
     return { status: "ERROR", message: error.message };
   }
 }
