@@ -47,9 +47,10 @@ async function ejecutarBot(listaCodigosActivos = []) {
     const ahora = new Date();
     const fechaEncabezado = `${ahora.getDate().toString().padStart(2, '0')}/${(ahora.getMonth() + 1).toString().padStart(2, '0')} ${ahora.getHours().toString().padStart(2, '0')}:${ahora.getMinutes().toString().padStart(2, '0')}`;
 
-    // 2. Iniciar navegador Playwright
+    // 2. Iniciar navegador Playwright forzando el canal Chromium estándar
     const browser = await chromium.launch({
       headless: true,
+      channel: 'chromium',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
@@ -62,7 +63,7 @@ async function ejecutarBot(listaCodigosActivos = []) {
       const nombreHoja = sheetObj.properties.title;
       console.log(`\n📑 Analizando pestaña: ${nombreHoja}`);
 
-      // Obtener la fila 1 para buscar o crear la columna del día (Lógica tipo Apps Script)
+      // Obtener la fila 1 para buscar o crear la columna del día
       const resFila1 = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${nombreHoja}'!1:1`,
