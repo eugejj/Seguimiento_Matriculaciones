@@ -4,7 +4,8 @@
   "description": "Bot para extraer inscriptos de SGA y volcarlos directo en Google Sheets",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "googleapis": "^140.0.0",
