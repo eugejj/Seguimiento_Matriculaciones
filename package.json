@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "postinstall": "puppeteer browsers install chrome"
   },
   "dependencies": {
     "googleapis": "^118.0.0",

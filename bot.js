@@ -3,18 +3,11 @@ const http = require('http');
 const { google } = require('googleapis');
 const path = require('path');
 
-// ID de tu planilla origen
 const SPREADSHEET_ID = '1l06xCPah3B1AdyXzLu7ILoyBINCMI8fFze8ug7bOGls';
 
-const auth = new google.auth.GoogleAuth({
-  keyFile: path.join(__dirname, 'credentials.json'),
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-
-const sheets = google.sheets({ version: 'v4', auth });
-
 async function ejecutarBot(listaCodigosActivos = []) {
-  console.log("🚀 Iniciando extracción de SGA...");
+  console.log("--------------------------------------------------");
+  console.log("📍 [PASO 1] Iniciando función ejecutarBot...");
 
   let codigosAProcesar = listaCodigosActivos.map(item => {
     if (typeof item === 'object' && item !== null) {
@@ -24,31 +17,60 @@ async function ejecutarBot(listaCodigosActivos = []) {
   }).filter(Boolean);
 
   if (codigosAProcesar.length === 0) {
+    console.log("⚠️ [PASO 1] No se recibieron códigos válidos.");
     return { status: "OK", guardadosSheets: 0, detalle: "No se recibieron códigos para procesar." };
   }
 
+  console.log(`📍 [PASO 1] Códigos recibidos (${codigosAProcesar.length}):`, codigosAProcesar);
+
+  // 1. Verificar lectura del archivo credentials.json
+  console.log("📍 [PASO 2] Verificando credenciales de Google...");
+  let auth, sheets;
   try {
-    const browser = await puppeteer.launch({
+    auth = new google.auth.GoogleAuth({
+      keyFile: path.join(__dirname, 'credentials.json'),
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    sheets = google.sheets({ version: 'v4', auth });
+    console.log("✅ [PASO 2] Credenciales cargadas correctamente.");
+  } catch (errCredentials) {
+    console.error("❌ [PASO 2 ERROR] Falló la lectura de credentials.json:", errCredentials.message);
+    return { status: "ERROR", message: "Error al leer credentials.json: " + errCredentials.message };
+  }
+
+  // 2. Intentar lanzar Puppeteer (Navegador)
+  console.log("📍 [PASO 3] Intentando abrir el navegador con Puppeteer...");
+  let browser;
+  try {
+    browser = await puppeteer.launch({
       headless: "new",
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
+    console.log("✅ [PASO 3] Navegador abierto exitosamente.");
+  } catch (errBrowser) {
+    console.error("❌ [PASO 3 ERROR] Falló al abrir el navegador Chrome/Puppeteer:", errBrowser.message);
+    return { status: "ERROR", message: "Error en Navegador (Puppeteer/Chrome): " + errBrowser.message };
+  }
 
+  // 3. Consultar la web del SGA
+  const filasAEscribir = [];
+  const listaResultados = [];
+  
+  const ahora = new Date();
+  const dia = ahora.getDate().toString().padStart(2, '0');
+  const mes = (ahora.getMonth() + 1).toString().padStart(2, '0');
+  const hora = ahora.getHours().toString().padStart(2, '0');
+  const min = ahora.getMinutes().toString().padStart(2, '0');
+  const fechaHora = `${dia}/${mes} ${hora}:${min}`;
+
+  try {
     const page = await browser.newPage();
+    console.log("📍 [PASO 4] Navegando a la web del SGA...");
     await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle2' });
-
-    const filasAEscribir = [];
-    const listaResultados = [];
-    
-    // Generar timestamp con formato DD/MM HH:mm
-    const ahora = new Date();
-    const dia = ahora.getDate().toString().padStart(2, '0');
-    const mes = (ahora.getMonth() + 1).toString().padStart(2, '0');
-    const hora = ahora.getHours().toString().padStart(2, '0');
-    const min = ahora.getMinutes().toString().padStart(2, '0');
-    const fechaHora = `${dia}/${mes} ${hora}:${min}`;
+    console.log("✅ [PASO 4] Página del SGA cargada.");
 
     for (const codigo of codigosAProcesar) {
-      console.log(`🔎 Consultando en SGA: ${codigo}`);
+      console.log(`🔎 [PASO 5] Buscando código: ${codigo}`);
       
       await page.waitForSelector('input', { visible: true });
       const inputs = await page.$$('input');
@@ -70,21 +92,30 @@ async function ejecutarBot(listaCodigosActivos = []) {
         return 0;
       }, codigo);
 
-      // Fila: [Fecha/Hora, Código, Confirmados]
+      console.log(`   👉 Resultado para ${codigo}: ${confirmados} confirmados.`);
       filasAEscribir.push([fechaHora, codigo, confirmados]);
       listaResultados.push(`${codigo}: ${confirmados} confirmados`);
     }
 
     await browser.close();
+    console.log("✅ [PASO 5] Extracción finalizada y navegador cerrado.");
 
-    // Guardar los datos en la solapa 'evolucion' empezando desde la columna A
-    console.log("✍️ Guardando en la hoja evolucion...");
+  } catch (errSGA) {
+    if (browser) await browser.close();
+    console.error("❌ [PASO 4/5 ERROR] Falló durante la navegación en SGA:", errSGA.message);
+    return { status: "ERROR", message: "Error leyendo la web del SGA: " + errSGA.message };
+  }
+
+  // 4. Escribir resultados en Google Sheets
+  console.log("📍 [PASO 6] Intentando guardar datos en Google Sheets...");
+  try {
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: 'evolucion!A:C',
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: filasAEscribir },
     });
+    console.log("🎉 [PASO 6] Datos guardados con éxito en la solapa 'evolucion'.");
 
     return {
       status: "OK",
@@ -92,9 +123,9 @@ async function ejecutarBot(listaCodigosActivos = []) {
       detalle: listaResultados.join('\n')
     };
 
-  } catch (error) {
-    console.error("❌ Error en servidor:", error);
-    return { status: "ERROR", message: error.message };
+  } catch (errSheets) {
+    console.error("❌ [PASO 6 ERROR] Falló al escribir en Google Sheets:", errSheets.message);
+    return { status: "ERROR", message: "Error al escribir en Google Sheets: " + errSheets.message };
   }
 }
 
