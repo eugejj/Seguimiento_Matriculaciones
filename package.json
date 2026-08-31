@@ -1,0 +1,12 @@
+{
+  "name": "bot-sga-nube",
+  "version": "1.0.0",
+  "description": "Bot scraping SGA Escuela de Maestros",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "playwright-chromium": "^1.40.0"
+  }
+}
