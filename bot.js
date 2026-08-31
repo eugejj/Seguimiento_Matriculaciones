@@ -3,10 +3,8 @@ const http = require('http');
 const { google } = require('googleapis');
 const path = require('path');
 
-// ID de tu planilla destino FINAL
 const SPREADSHEET_ID = '1yk2Lhe39x8M0_JvOi3L50h9HgNGeVJr4JM0C8xLG7zA';
 
-// Autenticación con Google Sheets API
 const auth = new google.auth.GoogleAuth({
   keyFile: path.join(__dirname, 'credentials.json'),
   scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -14,7 +12,6 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-// Función auxiliar para convertir números de columna a letras de Excel (1->A, 2->B, 27->AA, 55->BC)
 function numeroAColumna(n) {
   let str = "";
   while (n > 0) {
@@ -26,9 +23,9 @@ function numeroAColumna(n) {
 }
 
 async function ejecutarBot(listaCodigosActivos = []) {
-  console.log("🚀 Bot iniciado: Réplica exacta de 'consolidarEvolucion'...");
+  console.log("🚀 Iniciando Bot...");
 
-  // Normalizar los códigos provenientes del HTML
+  // Desestructuración segura del payload para extraer texto puro
   const codigosAProcesar = listaCodigosActivos.map(item => {
     if (typeof item === 'object' && item !== null) {
       return String(item.codigo || item.id || Object.values(item)[0] || '').trim();
@@ -36,10 +33,19 @@ async function ejecutarBot(listaCodigosActivos = []) {
     return String(item).trim();
   }).filter(c => c.length > 0);
 
-  console.log(`📌 Se procesarán ${codigosAProcesar.length} código(s) activo(s).`);
+  console.log(`📌 Códigos limpios recibidos: ${codigosAProcesar.length}`);
+
+  if (codigosAProcesar.length === 0) {
+    return {
+      status: "OK",
+      totalEnviados: 0,
+      procesadosSGA: 0,
+      guardadosSheets: 0,
+      message: "Lista de códigos vacía."
+    };
+  }
 
   try {
-    // 1. Iniciar navegador Playwright
     const browser = await chromium.launch({
       headless: true,
       channel: 'chromium',
@@ -50,12 +56,11 @@ async function ejecutarBot(listaCodigosActivos = []) {
     await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
     await page.waitForLoadState('networkidle');
 
-    // Array para guardar en memoria las descargas de SGA (Equivalente a la hoja 'evolucion')
     const resultadosEvolucion = [];
 
-    // 2. Extraer datos del SGA para cada código activo
+    // 1. Búsqueda en SGA
     for (const codigo of codigosAProcesar) {
-      console.log(`🔎 Buscando en SGA: ${codigo}...`);
+      console.log(`🔎 Consultando SGA: ${codigo}`);
 
       const input = page.locator('input:visible').first();
       await input.fill('');
@@ -76,19 +81,11 @@ async function ejecutarBot(listaCodigosActivos = []) {
       }
 
       resultadosEvolucion.push({ codigo: codigo, confirmados: confirmados });
-      console.log(`📥 SGA: ${codigo} -> Inscriptos: ${confirmados}`);
     }
 
     await browser.close();
 
-    if (resultadosEvolucion.length === 0) {
-      console.log("⚠️ No se extrajo ningún dato del SGA.");
-      return { status: "OK", message: "Sin datos para consolidar." };
-    }
-
-    // 3. CONSOLIDAR EN PLANILLA DESTINO (Réplica exacta de consolidarEvolucion)
-    console.log("\n📊 Iniciando consolidación en Planilla Destino...");
-
+    // 2. Consolidación en Google Sheets
     const resMetaData = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
     const hojas = resMetaData.data.sheets;
 
@@ -104,25 +101,23 @@ async function ejecutarBot(listaCodigosActivos = []) {
     for (const sheetObj of hojas) {
       const nombreHoja = sheetObj.properties.title;
 
-      // Obtener datos completos de la hoja
       const resValores = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${nombreHoja}'!A:ZZ`,
       });
 
       const filas = resValores.data.values || [];
-      if (filas.length < 2) continue; // Si no tiene filas, la salteamos
+      if (filas.length < 2) continue;
 
-      // Calcular getLastColumn() real
       let maxCols = 0;
       filas.forEach(f => {
         if (f.length > maxCols) maxCols = f.length;
       });
 
-      const nuevaColumnaNum = maxCols + 1; // getLastColumn() + 1
+      const nuevaColumnaNum = maxCols + 1;
       const letraNuevaCol = numeroAColumna(nuevaColumnaNum);
 
-      // Escribir la cabecera de la fecha en la Fila 1 de la nueva columna
+      // Insertar encabezado de fecha
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `'${nombreHoja}'!${letraNuevaCol}1`,
@@ -130,7 +125,6 @@ async function ejecutarBot(listaCodigosActivos = []) {
         requestBody: { values: [[encabezadoFecha]] },
       });
 
-      // Mapear códigos de la Columna A de la hoja
       const codigosHoja = filas.map(f => (f[0] ? String(f[0]).trim() : ""));
 
       informacionHojas.push({
@@ -140,15 +134,12 @@ async function ejecutarBot(listaCodigosActivos = []) {
       });
     }
 
-    // 4. Recorrer los resultados descargados y ubicarlos en su respectiva fila y hoja
-    let encontrados = 0;
+    let guardadosCount = 0;
 
+    // Relacionar códigos e insertar en la matriz
     for (const item of resultadosEvolucion) {
-      const codigoBuscado = item.codigo;
-      const inscriptos = item.confirmados;
-
       for (const info of informacionHojas) {
-        const indexFila = info.codigos.indexOf(codigoBuscado);
+        const indexFila = info.codigos.indexOf(item.codigo);
 
         if (indexFila !== -1) {
           const numeroFila = indexFila + 1;
@@ -157,26 +148,28 @@ async function ejecutarBot(listaCodigosActivos = []) {
             spreadsheetId: SPREADSHEET_ID,
             range: `'${info.nombre}'!${info.letraColumna}${numeroFila}`,
             valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[inscriptos]] },
+            requestBody: { values: [[item.confirmados]] },
           });
 
-          console.log(`✅ ${codigoBuscado} -> ${inscriptos} guardado en [${info.nombre} ! ${info.letraColumna}${numeroFila}]`);
-          encontrados++;
+          guardadosCount++;
           break;
         }
       }
     }
 
-    console.log(`🎉 Consolidación finalizada. Cursos actualizados: ${encontrados}`);
-    return { status: "OK" };
+    return {
+      status: "OK",
+      totalEnviados: listaCodigosActivos.length,
+      procesadosSGA: resultadosEvolucion.length,
+      guardadosSheets: guardadosCount
+    };
 
   } catch (error) {
-    console.error("❌ Error durante el proceso:", error);
+    console.error("❌ Error:", error);
     return { status: "ERROR", message: error.message };
   }
 }
 
-// Servidor Web para recibir la orden del HTML
 const PORT = process.env.PORT || 3000;
 http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -207,7 +200,7 @@ http.createServer(async (req, res) => {
     });
   } else {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end("Servidor activo y listo ☁️");
+    res.end("Servidor listo ☁️");
   }
 }).listen(PORT, () => {
   console.log(`🟢 Servidor escuchando en puerto ${PORT}`);
