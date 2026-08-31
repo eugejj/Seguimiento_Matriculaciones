@@ -3,7 +3,7 @@ const http = require('http');
 const { google } = require('googleapis');
 const path = require('path');
 
-// PLANILLA ORIGEN (Donde lee 'buscar_codigo' y escribe 'evolucion')
+// ID de la planilla que se ve en tu captura de pantalla
 const SPREADSHEET_ID = '1l06xCPah3B1AdyXzLu7ILoyBINCMI8fFze8ug7bOGls';
 
 const auth = new google.auth.GoogleAuth({
@@ -14,9 +14,8 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: 'v4', auth });
 
 async function ejecutarBot(listaCodigosActivos = []) {
-  console.log("🚀 Bot iniciado: Extracción SGA -> Hoja 'evolucion'...");
+  console.log("🚀 Bot iniciado...");
 
-  // Normalización de códigos recibidos
   let codigosAProcesar = listaCodigosActivos.map(item => {
     if (typeof item === 'object' && item !== null) {
       return String(item.codigo || item.id || Object.values(item)[0] || '').trim();
@@ -25,9 +24,9 @@ async function ejecutarBot(listaCodigosActivos = []) {
   }).filter(Boolean);
 
   try {
-    // Si no vinieron códigos desde el cliente, los leemos directo de la pestaña 'buscar_codigo'
+    // Si no vinieron códigos desde el botón, los lee de 'buscar_codigo'
     if (codigosAProcesar.length === 0) {
-      console.log("📖 Leyendo directamente de 'buscar_codigo'...");
+      console.log("📖 Leyendo directamente de la pestaña buscar_codigo...");
       const resEntrada = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: 'buscar_codigo!A2:A',
@@ -36,20 +35,13 @@ async function ejecutarBot(listaCodigosActivos = []) {
       codigosAProcesar = filas.flat().map(c => String(c).trim()).filter(Boolean);
     }
 
-    console.log(`📌 Se procesarán ${codigosAProcesar.length} código(s).`);
+    console.log(`📌 Códigos a procesar: ${codigosAProcesar.length}`);
 
     if (codigosAProcesar.length === 0) {
-      return {
-        status: "OK",
-        totalEnviados: 0,
-        procesadosSGA: 0,
-        guardadosSheets: 0,
-        detalle: [],
-        message: "No se encontraron códigos para procesar."
-      };
+      return { status: "OK", guardadosSheets: 0, message: "No hay códigos para procesar." };
     }
 
-    // 1. EXTRAER INSCRIPTOS DEL SGA
+    // 1. Extraer datos del SGA
     const browser = await chromium.launch({
       headless: true,
       channel: 'chromium',
@@ -60,12 +52,12 @@ async function ejecutarBot(listaCodigosActivos = []) {
     await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
     await page.waitForLoadState('networkidle');
 
-    const resultados = [];
+    const filasAEscribir = [];
     const ahora = new Date();
     const fechaHora = `${ahora.getDate().toString().padStart(2, '0')}/${(ahora.getMonth() + 1).toString().padStart(2, '0')} ${ahora.getHours().toString().padStart(2, '0')}:${ahora.getMinutes().toString().padStart(2, '0')}`;
 
     for (const codigo of codigosAProcesar) {
-      console.log(`🔎 Consultando SGA: ${codigo}...`);
+      console.log(`🔎 Consultando SGA para: ${codigo}`);
 
       const input = page.locator('input:visible').first();
       await input.fill('');
@@ -85,41 +77,32 @@ async function ejecutarBot(listaCodigosActivos = []) {
         }
       }
 
-      resultados.push([fechaHora, codigo, confirmados]);
-      console.log(`✅ Extraído: ${codigo} -> ${confirmados}`);
+      filasAEscribir.push([fechaHora, codigo, confirmados]);
     }
 
     await browser.close();
 
-    // 2. ESCRIBIR EN LA HOJA 'evolucion'
-    console.log("✍️ Escribiendo resultados en la hoja 'evolucion'...");
-
-    // Limpiar contenido previo de 'evolucion' (manteniendo encabezados si existen)
+    // 2. Escribir en la pestaña 'evolucion'
+    console.log("✍️ Guardando en la pestaña 'evolucion'...");
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: 'evolucion!A:C',
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: resultados },
+      requestBody: { values: filasAEscribir },
     });
-
-    // Formatear texto del resumen para el alert emergente
-    const detalleTexto = resultados.map(r => `• ${r[1]}: ${r[2]} inscriptos`).join('\n');
 
     return {
       status: "OK",
-      totalEnviados: codigosAProcesar.length,
-      procesadosSGA: resultados.length,
-      guardadosSheets: resultados.length,
-      detalleResumen: detalleTexto
+      guardadosSheets: filasAEscribir.length,
+      detalle: filasAEscribir.map(f => `${f[1]}: ${f[2]}`).join(', ')
     };
 
   } catch (error) {
-    console.error("❌ Error durante el proceso:", error);
+    console.error("❌ Error:", error);
     return { status: "ERROR", message: error.message };
   }
 }
 
-// SERVIDOR HTTP
 const PORT = process.env.PORT || 3000;
 http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -150,7 +133,7 @@ http.createServer(async (req, res) => {
     });
   } else {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end("Servidor activo y listo ☁️");
+    res.end("Servidor listo ☁️");
   }
 }).listen(PORT, () => {
   console.log(`🟢 Servidor escuchando en puerto ${PORT}`);
