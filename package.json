@@ -1,14 +1,12 @@
 {
-  "name": "bot-sga-matriculaciones",
+  "name": "seguimiento-matriculaciones",
   "version": "1.0.0",
-  "description": "Bot para extraer inscriptos de SGA y volcarlos directo en Google Sheets",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "postinstall": "npx playwright install chromium"
+    "start": "node bot.js"
   },
   "dependencies": {
-    "googleapis": "^140.0.0",
-    "playwright-chromium": "^1.40.0"
+    "googleapis": "^118.0.0",
+    "puppeteer": "^21.5.0"
   }
 }

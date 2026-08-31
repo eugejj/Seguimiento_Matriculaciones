@@ -1,9 +1,9 @@
-const { chromium } = require('playwright-chromium');
+const puppeteer = require('puppeteer');
 const http = require('http');
 const { google } = require('googleapis');
 const path = require('path');
 
-// PLANILLA ORIGEN
+// ID de tu planilla origen
 const SPREADSHEET_ID = '1l06xCPah3B1AdyXzLu7ILoyBINCMI8fFze8ug7bOGls';
 
 const auth = new google.auth.GoogleAuth({
@@ -23,54 +23,62 @@ async function ejecutarBot(listaCodigosActivos = []) {
     return String(item).trim();
   }).filter(Boolean);
 
-  try {
-    if (codigosAProcesar.length === 0) {
-      return { status: "OK", guardadosSheets: 0, message: "No se recibieron códigos." };
-    }
+  if (codigosAProcesar.length === 0) {
+    return { status: "OK", guardadosSheets: 0, detalle: "No se recibieron códigos para procesar." };
+  }
 
-    // 1. Lanzar navegador con Playwright
-    const browser = await chromium.launch({
-      headless: true,
+  try {
+    const browser = await puppeteer.launch({
+      headless: "new",
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
     const page = await browser.newPage();
-    await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
-    await page.waitForLoadState('networkidle');
+    await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle2' });
 
     const filasAEscribir = [];
+    const listaResultados = [];
+    
+    // Generar timestamp con formato DD/MM HH:mm
     const ahora = new Date();
-    const fechaHora = `${ahora.getDate().toString().padStart(2, '0')}/${(ahora.getMonth() + 1).toString().padStart(2, '0')} ${ahora.getHours().toString().padStart(2, '0')}:${ahora.getMinutes().toString().padStart(2, '0')}`;
+    const dia = ahora.getDate().toString().padStart(2, '0');
+    const mes = (ahora.getMonth() + 1).toString().padStart(2, '0');
+    const hora = ahora.getHours().toString().padStart(2, '0');
+    const min = ahora.getMinutes().toString().padStart(2, '0');
+    const fechaHora = `${dia}/${mes} ${hora}:${min}`;
 
     for (const codigo of codigosAProcesar) {
-      console.log(`🔎 SGA: Consultando ${codigo}...`);
-
-      const input = page.locator('input:visible').first();
-      await input.fill('');
-      await input.fill(codigo);
-      await page.waitForTimeout(2000);
-
-      const filasTabla = page.locator('tr', { hasText: codigo });
-      const count = await filasTabla.count();
-      let confirmados = 0;
-
-      if (count > 0) {
-        const filaTarget = filasTabla.nth(0);
-        const tds = filaTarget.locator('td');
-        if ((await tds.count()) > 11) {
-          const val = (await tds.nth(11).innerText()).trim();
-          confirmados = Number(val) || 0;
-        }
+      console.log(`🔎 Consultando en SGA: ${codigo}`);
+      
+      await page.waitForSelector('input', { visible: true });
+      const inputs = await page.$$('input');
+      if (inputs.length > 0) {
+        await inputs[0].click({ clickCount: 3 });
+        await inputs[0].type(codigo);
+        await new Promise(r => setTimeout(r, 2000));
       }
 
-      // Estructura: Columna A (Fecha/Hora), Columna B (Código), Columna C (Confirmados)
+      const confirmados = await page.evaluate((cod) => {
+        const trs = Array.from(document.querySelectorAll('tr'));
+        const filaTarget = trs.find(tr => tr.innerText.includes(cod));
+        if (filaTarget) {
+          const tds = filaTarget.querySelectorAll('td');
+          if (tds.length > 11) {
+            return parseInt(tds[11].innerText.trim()) || 0;
+          }
+        }
+        return 0;
+      }, codigo);
+
+      // Fila: [Fecha/Hora, Código, Confirmados]
       filasAEscribir.push([fechaHora, codigo, confirmados]);
+      listaResultados.push(`${codigo}: ${confirmados} confirmados`);
     }
 
     await browser.close();
 
-    // 2. Insertar directamente en la pestaña 'evolucion' desde la Columna A
-    console.log("✍️ Guardando filas en la pestaña 'evolucion'...");
+    // Guardar los datos en la solapa 'evolucion' empezando desde la columna A
+    console.log("✍️ Guardando en la hoja evolucion...");
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: 'evolucion!A:C',
@@ -81,7 +89,7 @@ async function ejecutarBot(listaCodigosActivos = []) {
     return {
       status: "OK",
       guardadosSheets: filasAEscribir.length,
-      detalle: filasAEscribir.map(f => `${f[1]}: ${f[2]}`).join(', ')
+      detalle: listaResultados.join('\n')
     };
 
   } catch (error) {
@@ -120,7 +128,7 @@ http.createServer(async (req, res) => {
     });
   } else {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end("Servidor listo ☁️");
+    res.end("Servidor activo ☁️");
   }
 }).listen(PORT, () => {
   console.log(`🟢 Servidor escuchando en puerto ${PORT}`);
