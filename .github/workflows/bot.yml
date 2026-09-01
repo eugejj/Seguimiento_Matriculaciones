@@ -26,8 +26,7 @@ jobs:
 
       - name: Ejecutar Bot SGA
         env:
-          SGA_USER: ${{ secrets.SGA_USER }}
-          SGA_PASS: ${{ secrets.SGA_PASS }}
+          STORAGE_STATE: ${{ secrets.STORAGE_STATE }}
           SHEETS_GET: ${{ secrets.SHEETS_GET }}
           SHEETS_POST: ${{ secrets.SHEETS_POST }}
         run: node bot.js
