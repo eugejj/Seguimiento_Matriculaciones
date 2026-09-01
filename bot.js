@@ -23,21 +23,28 @@ const { chromium } = require('playwright');
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  console.log("🌐 Navegando al login del SGA...");
-  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/login', { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(2000);
+  console.log("🌐 Navegando al SGA...");
+  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
+  await page.waitForLoadState('networkidle');
 
-  console.log("🔑 Iniciando sesión...");
-  await page.fill('input[type="text"], input[name="username"], input[name="user"]', SGA_USER || '');
-  await page.fill('input[type="password"]', SGA_PASS || '');
-  await page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")');
-  
-  await page.waitForTimeout(5000);
+  // AJUSTE: Si el SGA nos mandó al login por no estar autenticados, se loguea sí o sí
+  if (page.url().includes('login')) {
+    console.log("🔑 Iniciando sesión...");
+    await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(SGA_USER || '');
+    await page.locator('input[type="password"]').first().fill(SGA_PASS || '');
 
-  console.log("🌐 Navegando a la sección de propuestas...");
-  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
-  await page.waitForSelector('input[type="search"], input[placeholder*="Buscar"], input.form-control', { timeout: 30000 });
-  console.log("✅ Sesión iniciada y buscador cargado.");
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
+      page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
+    ]);
+    console.log("✅ Sesión iniciada.");
+
+    // Volver a propuestas si quedó en otra pantalla
+    if (!page.url().includes('propuestas')) {
+      await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
+      await page.waitForLoadState('networkidle');
+    }
+  }
 
   // 3. EXTRAER DATOS DEL SGA
   const resultados = [];
