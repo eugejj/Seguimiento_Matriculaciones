@@ -28,10 +28,12 @@ const { chromium } = require('playwright');
   // 🔑 3. LOGIN EN SGA
   console.log("🔑 Iniciando sesión...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/login');
-  await page.waitForLoadState('domcontentloaded');
+  await page.waitForLoadState('networkidle');
 
-  await page.locator('input[type="text"], input[type="email"], input[name="usuario"], input[name="username"]').first().fill(SGA_USER || '');
-  await page.locator('input[type="password"]').first().fill(SGA_PASS || '');
+  // Seleccionar campos de forma directa y flexible
+  const inputs = page.locator('input:visible');
+  await inputs.nth(0).fill(SGA_USER || '');
+  await inputs.nth(1).fill(SGA_PASS || '');
 
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
@@ -40,17 +42,16 @@ const { chromium } = require('playwright');
 
   console.log("✅ Sesión iniciada.");
 
-  // Ir a propuestas
+  // Ir a propuestas tras el login
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
   await page.waitForLoadState('networkidle');
 
-  // 🔁 4. LOOP DE CÓDIGOS
+  // 🔁 4. LOOP DE CÓDIGOS (TU CÓDIGO EXACTO LOCAL)
   for (const codigoBase of codigos) {
     console.log("\n🔎 buscando:", codigoBase);
 
     try {
       const input = page.locator('input:visible').first();
-      await input.waitFor({ state: 'visible', timeout: 30000 });
       await input.fill('');
       await input.fill(codigoBase);
 
@@ -82,7 +83,7 @@ const { chromium } = require('playwright');
 
         console.log({ codigo, confirmados });
 
-        // 📤 ENVIAR A SHEETS (POST)
+        // 📤 ENVIAR A SHEETS
         const postRes = await fetch(SHEETS_POST, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
