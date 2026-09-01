@@ -1,90 +1,97 @@
 const { chromium } = require('playwright');
 
 (async () => {
+
   console.log("🚀 Bot iniciado");
 
+  // 📥 LEER URLS Y CREDENCIALES DE ENTORNO
   const SHEETS_GET = process.env.SHEETS_GET;
   const SHEETS_POST = process.env.SHEETS_POST;
   const SGA_USER = process.env.SGA_USER;
   const SGA_PASS = process.env.SGA_PASS;
 
-  // 1. LEER CÓDIGOS DE LA PLANILLA
-  const res = await fetch(SHEETS_GET, { redirect: 'follow' });
+  // 🔥 1. TRAER CÓDIGOS
+  const res = await fetch(SHEETS_GET);
   const codigos = await res.json();
-  console.log("📥 Códigos cargados:", codigos);
 
-  if (!codigos || codigos.length === 0) {
-    console.log("⚠️ No se encontraron códigos.");
-    return;
-  }
+  console.log("📥 códigos cargados:", codigos);
 
-  // 2. NAVEGADOR Y LOGIN AUTOMÁTICO
+  // 🧠 2. ABRIR NAVEGADOR
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  console.log("🌐 Navegando al SGA...");
+  // 🔑 3. LOGIN EN SGA
+  console.log("🔑 Iniciando sesión...");
+  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/login');
+  
+  await page.fill('input[type="text"], input[type="email"], input[name="usuario"]', SGA_USER);
+  await page.fill('input[type="password"]', SGA_PASS);
+  await page.click('button[type="submit"], input[type="submit"]');
+
+  await page.waitForNavigation({ waitUntil: 'networkidle' });
+
+  // Ir a propuestas
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
   await page.waitForLoadState('networkidle');
 
-  // AJUSTE: Si el SGA nos mandó al login por no estar autenticados, se loguea sí o sí
-  if (page.url().includes('login')) {
-    console.log("🔑 Iniciando sesión...");
-    await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(SGA_USER || '');
-    await page.locator('input[type="password"]').first().fill(SGA_PASS || '');
+  // 🔁 4. LOOP DE CÓDIGOS
+  for (const codigoBase of codigos) {
 
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
-      page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
-    ]);
-    console.log("✅ Sesión iniciada.");
+    console.log("\n🔎 buscando:", codigoBase);
 
-    // Volver a propuestas si quedó en otra pantalla
-    if (!page.url().includes('propuestas')) {
-      await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
-      await page.waitForLoadState('networkidle');
+    // Esperar y limpiar buscador
+    const input = page.locator('input[type="search"], input[placeholder*="Buscar"], input.form-control').first();
+    await input.waitFor({ state: 'visible', timeout: 30000 });
+    await input.fill('');
+    await input.fill(codigoBase);
+
+    // Esperar a que la tabla filtre
+    await page.waitForTimeout(4000);
+
+    // Buscar filas coincidentes
+    const filas = page.locator('tr', { hasText: codigoBase });
+    const count = await filas.count();
+
+    console.log(`📊 filas encontradas para ${codigoBase}:`, count);
+
+    if (count === 0) {
+      console.log("⚠️ No se encontraron filas");
+      continue;
     }
-  }
 
-  // 3. EXTRAER DATOS DEL SGA
-  const resultados = [];
+    // Recorrer variantes
+    for (let i = 0; i < count; i++) {
 
-  for (const codigo of codigos) {
-    console.log(`🔎 Buscando: ${codigo}`);
-    try {
-      const searchInput = page.locator('input[type="search"], input[placeholder*="Buscar"], input.form-control').first();
-      await searchInput.fill(codigo);
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(1500);
+      const fila = filas.nth(i);
+      const tds = fila.locator('td');
+      const columnas = await tds.count();
 
-      const celdaDato = page.locator('table tbody tr:first-child td').last();
-      const valorExtraido = await celdaDato.innerText().catch(() => "0");
+      if (columnas === 0) continue;
 
-      resultados.push({
-        codigo: codigo,
-        confirmados: Number(valorExtraido.trim()) || 0
+      const codigo = (await tds.nth(1).innerText()).trim();
+
+      let confirmados = "0";
+      if (columnas > 11) {
+        confirmados = (await tds.nth(11).innerText()).trim();
+      }
+
+      console.log({ codigo, confirmados });
+
+      // 📤 Enviar a Apps Script
+      const postRes = await fetch(SHEETS_POST, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo, confirmados })
       });
 
-      console.log(`    └> Extraído: ${valorExtraido.trim()}`);
-    } catch (err) {
-      console.log(`    ❌ Error en ${codigo}: ${err.message}`);
-      resultados.push({ codigo: codigo, confirmados: 0 });
+      console.log("STATUS:", postRes.status);
     }
+
+    await page.waitForTimeout(2000);
   }
 
+  console.log("\n✅ Bot terminado");
   await browser.close();
 
-  // 4. ENVIAR DIRECTO A LA PLANILLA DESTINO
-  if (SHEETS_POST && resultados.length > 0) {
-    console.log("📤 Enviando datos a Google Sheets...");
-    const respuestaPost = await fetch(SHEETS_POST, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      redirect: 'follow',
-      body: JSON.stringify(resultados)
-    });
-    console.log("✅ Resultado:", await respuestaPost.text());
-  }
-
-  console.log("🏁 Proceso finalizado con éxito.");
 })();
