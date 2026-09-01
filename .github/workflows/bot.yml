@@ -1,9 +1,9 @@
 name: Bot SGA Automation
 
 on:
-  workflow_dispatch: # Permite ejecutar el bot manualmente desde un botón o desde GitHub
+  workflow_dispatch:
   schedule:
-    - cron: '0 11 * * *' # Ejecuta automáticamente todos los días a las 8:00 AM (hora Argentina / 11:00 UTC)
+    - cron: '0 11 * * *'
 
 jobs:
   run-bot:
@@ -11,12 +11,12 @@ jobs:
 
     steps:
       - name: Descargar código del repositorio
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Instalar dependencias del proyecto
         run: npm install
