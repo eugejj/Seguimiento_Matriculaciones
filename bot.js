@@ -7,29 +7,29 @@ const fs = require('fs');
   const SHEETS_GET = process.env.SHEETS_GET;
   const SHEETS_POST = process.env.SHEETS_POST;
 
-  // 🔥 1. TRAER CÓDIGOS
+  // 🔥 1. TRAER CÓDIGOS DESDE SHEETS
   const res = await fetch(SHEETS_GET, { redirect: 'follow' });
   const codigos = await res.json();
 
   console.log("📥 códigos cargados:", codigos);
 
-  // 🔐 RESTAURAR SESIÓN DESDE GITHUB SECRETS
+  // 🔐 RESTAURAR SESIÓN DESDE GITHUB SECRETS (SI EXISTE)
   if (process.env.STORAGE_STATE) {
     fs.writeFileSync('state.json', process.env.STORAGE_STATE);
   }
 
-  // 🧠 2. ABRIR NAVEGADOR CON LA SESIÓN GUARDADA
+  // 🧠 2. ABRIR NAVEGADOR CON SESIÓN
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     storageState: fs.existsSync('state.json') ? 'state.json' : undefined
   });
   const page = await context.newPage();
 
-  // 🔑 IR DIRECTO A PROPUESTAS (YA LOGUEADO)
+  // 🔑 IR DIRECTO A PROPUESTAS
   console.log("🔑 Ingresando a la plataforma...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  // 🔁 3. LOOP DE CÓDIGOS (TU CÓDIGO EXACTO)
+  // 🔁 3. LOOP DE CÓDIGOS (TU LÓGICA ORIGINAL)
   for (const codigoBase of codigos) {
     console.log("\n🔎 buscando:", codigoBase);
 
@@ -65,6 +65,7 @@ const fs = require('fs');
 
       console.log({ codigo, confirmados });
 
+      // 📤 ENVIAR A SHEETS
       const postRes = await fetch(SHEETS_POST, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
