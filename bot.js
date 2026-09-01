@@ -1,25 +1,30 @@
+const http = require('http');
 const { chromium } = require('playwright');
 
-(async () => {
+// Servidor HTTP dummy para mantener vivo el Web Service en Render
+const PORT = process.env.PORT || 10000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot activo');
+}).listen(PORT, () => {
+  console.log(`🚀 Servidor listo en puerto ${PORT}`);
+});
 
+(async () => {
   console.log("🚀 Bot iniciado en Render");
 
-  // 📥 LEER CÓDIGOS Y POSTEAR DESDE ENV
-  const SHEETS_GET = process.env.SHEETS_GET || "https://script.google.com/macros/s/AKfycbw5ReP1DrK1zW7Xjn9qJcWlVYivcz0-CxbN3ZAa3Kp6HiVYPMdpA3-XA3vHVMRq2Ste/exec";
-  const SHEETS_POST = process.env.SHEETS_POST || "https://script.google.com/macros/s/AKfycbw5ReP1DrK1zW7Xjn9qJcWlVYivcz0-CxbN3ZAa3Kp6HiVYPMdpA3-XA3vHVMRq2Ste/exec";
+  const SHEETS_GET = process.env.SHEETS_GET;
+  const SHEETS_POST = process.env.SHEETS_POST;
 
-  // 🔥 1. TRAER CÓDIGOS
   const res = await fetch(SHEETS_GET);
   const codigos = await res.json();
-
-  console.log("📥 códigos cargados:", codigos);
+  console.log("📥 Códigos cargados:", codigos);
 
   if (!codigos || codigos.length === 0) {
     console.log("⚠️ No hay códigos para procesar.");
     return;
   }
 
-  // 🧠 2. ABRIR NAVEGADOR (Modo Cloud / Headless)
   const browser = await chromium.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -31,46 +36,41 @@ const { chromium } = require('playwright');
   });
 
   const page = await context.newPage();
-  page.setDefaultTimeout(60000); // 60s timeout para Render
+  page.setDefaultTimeout(60000);
 
   console.log("🌐 Navegando al SGA...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  // 🔐 MANEJO DE LOGIN EN NUBE (Si solicita credenciales)
-  const usuarioInput = page.locator('input[type="text"], input[name="username"], input[name="user"]').first();
-  if (await usuarioInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log("🔑 Iniciando sesión en el SGA...");
-    await usuarioInput.fill(process.env.SGA_USER);
-    await page.locator('input[type="password"]').fill(process.env.SGA_PASS);
+  // PASO CRÍTICO: Detectar e iniciar sesión si la página redirige al login
+  const passInput = page.locator('input[type="password"]');
+  if (await passInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    console.log("🔑 Pantalla de login detectada. Autenticando...");
+    
+    // Rellena usuario y contraseña desde las Variables de Entorno de Render
+    await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(process.env.SGA_USER);
+    await passInput.first().fill(process.env.SGA_PASS);
     
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle' }),
       page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
     ]);
-    console.log("✅ Sesión iniciada.");
+    console.log("✅ Sesión iniciada correctamente.");
   }
 
-  // 🔁 3. LOOP DE CÓDIGOS
+  // LOOP DE BÚSQUEDA
   for (const codigoBase of codigos) {
-
     console.log("\n🔎 buscando:", codigoBase);
 
-    // Esperar a que el buscador esté listo y visible
+    // Esperar a que el buscador del SGA esté listo tras estar logueado
     const input = page.locator('input:visible').first();
     await input.waitFor({ state: 'visible', timeout: 60000 });
-    
-    // Limpiar e ingresar el código
+
     await input.fill('');
     await input.fill(codigoBase);
 
-    // 🔥 esperar render del filtro
     await page.waitForTimeout(4000);
 
-    // 🔥 buscar filas
-    const filas = page.locator('tr', {
-      hasText: codigoBase
-    });
-
+    const filas = page.locator('tr', { hasText: codigoBase });
     const count = await filas.count();
 
     console.log(`📊 filas encontradas para ${codigoBase}:`, count);
@@ -80,18 +80,14 @@ const { chromium } = require('playwright');
       continue;
     }
 
-    // 🔁 4. recorrer todas las variantes (C0766-01, etc.)
     for (let i = 0; i < count; i++) {
-
       const fila = filas.nth(i);
       const tds = fila.locator('td');
-
       const columnas = await tds.count();
 
       if (columnas === 0) continue;
 
       const codigo = (await tds.nth(1).innerText()).trim();
-
       let confirmados = "0";
 
       if (columnas > 11) {
@@ -100,27 +96,16 @@ const { chromium } = require('playwright');
 
       console.log({ codigo, confirmados });
 
-      // 📤 enviar a Sheets
-      const postRes = await fetch(SHEETS_POST, {
+      await fetch(SHEETS_POST, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          codigo,
-          confirmados
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo, confirmados })
       });
-
-      console.log("STATUS:", postRes.status);
-      console.log("RESP:", await postRes.text());
     }
 
     await page.waitForTimeout(2000);
   }
 
-  console.log("\n✅ Bot terminado");
-
+  console.log("\n✅ Bot terminado con éxito");
   await browser.close();
-
 })();
