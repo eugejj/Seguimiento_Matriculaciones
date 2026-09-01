@@ -23,22 +23,21 @@ const { chromium } = require('playwright');
   const context = await browser.newContext();
   const page = await context.newPage();
 
-  console.log("🌐 Navegando al SGA...");
-  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
-  await page.waitForLoadState('networkidle');
+  console.log("🌐 Navegando al login del SGA...");
+  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/login', { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(2000);
 
-  const passInput = page.locator('input[type="password"]');
-  if (await passInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log("🔑 Iniciando sesión...");
-    await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(SGA_USER || '');
-    await passInput.first().fill(SGA_PASS || '');
+  console.log("🔑 Iniciando sesión...");
+  await page.fill('input[type="text"], input[name="username"], input[name="user"]', SGA_USER || '');
+  await page.fill('input[type="password"]', SGA_PASS || '');
+  await page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")');
+  
+  await page.waitForTimeout(5000);
 
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
-      page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
-    ]);
-    console.log("✅ Sesión iniciada.");
-  }
+  console.log("🌐 Navegando a la sección de propuestas...");
+  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
+  await page.waitForSelector('input[type="search"], input[placeholder*="Buscar"], input.form-control', { timeout: 30000 });
+  console.log("✅ Sesión iniciada y buscador cargado.");
 
   // 3. EXTRAER DATOS DEL SGA
   const resultados = [];
@@ -59,9 +58,9 @@ const { chromium } = require('playwright');
         confirmados: Number(valorExtraido.trim()) || 0
       });
 
-      console.log(`   └> Extraído: ${valorExtraido.trim()}`);
+      console.log(`    └> Extraído: ${valorExtraido.trim()}`);
     } catch (err) {
-      console.log(`   ❌ Error en ${codigo}: ${err.message}`);
+      console.log(`    ❌ Error en ${codigo}: ${err.message}`);
       resultados.push({ codigo: codigo, confirmados: 0 });
     }
   }
@@ -73,7 +72,7 @@ const { chromium } = require('playwright');
     console.log("📤 Enviando datos a Google Sheets...");
     const respuestaPost = await fetch(SHEETS_POST, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      headers: { 'Content-Type': 'application/json' },
       redirect: 'follow',
       body: JSON.stringify(resultados)
     });
