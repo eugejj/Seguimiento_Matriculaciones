@@ -1,0 +1,33 @@
+name: Bot SGA Automation
+
+on:
+  workflow_dispatch: # Permite ejecutar el bot manualmente desde un botón o desde GitHub
+  schedule:
+    - cron: '0 11 * * *' # Ejecuta automáticamente todos los días a las 8:00 AM (hora Argentina / 11:00 UTC)
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código del repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Instalar dependencias del proyecto
+        run: npm install
+
+      - name: Instalar navegador Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Ejecutar Bot SGA
+        env:
+          SGA_USER: ${{ secrets.SGA_USER }}
+          SGA_PASS: ${{ secrets.SGA_PASS }}
+          SHEETS_GET: ${{ secrets.SHEETS_GET }}
+          SHEETS_POST: ${{ secrets.SHEETS_POST }}
+        run: node bot.js
