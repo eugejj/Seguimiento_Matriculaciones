@@ -1,17 +1,36 @@
 const http = require('http');
 const { chromium } = require('playwright');
 
-// Servidor HTTP dummy para mantener vivo el Web Service en Render
+// Servidor HTTP con CORS habilitado para recibir peticiones desde tu HTML
 const PORT = process.env.PORT || 10000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Bot activo');
+http.createServer(async (req, res) => {
+  // Configuración de cabeceras CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.write('Bot iniciado desde el HTML...\n');
+
+  // Ejecutar el proceso de scraping al recibir el clic del botón
+  try {
+    await ejecutarScraper();
+    res.end('Proceso finalizado con éxito.');
+  } catch (error) {
+    res.end(`Error en la ejecución: ${error.message}`);
+  }
 }).listen(PORT, () => {
-  console.log(`🚀 Servidor listo en puerto ${PORT}`);
+  console.log(`🚀 Servidor listo escuchando en puerto ${PORT}`);
 });
 
-(async () => {
-  console.log("🚀 Bot iniciado en Render");
+async function ejecutarScraper() {
+  console.log("🚀 Bot iniciado en Render via HTML");
 
   const SHEETS_GET = process.env.SHEETS_GET;
   const SHEETS_POST = process.env.SHEETS_POST;
@@ -41,12 +60,10 @@ http.createServer((req, res) => {
   console.log("🌐 Navegando al SGA...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  // PASO CRÍTICO: Detectar e iniciar sesión si la página redirige al login
+  // Autenticación automática si salta la pantalla de ingreso
   const passInput = page.locator('input[type="password"]');
   if (await passInput.isVisible({ timeout: 5000 }).catch(() => false)) {
     console.log("🔑 Pantalla de login detectada. Autenticando...");
-    
-    // Rellena usuario y contraseña desde las Variables de Entorno de Render
     await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(process.env.SGA_USER);
     await passInput.first().fill(process.env.SGA_PASS);
     
@@ -57,17 +74,15 @@ http.createServer((req, res) => {
     console.log("✅ Sesión iniciada correctamente.");
   }
 
-  // LOOP DE BÚSQUEDA
+  // Búsqueda y envío de datos
   for (const codigoBase of codigos) {
     console.log("\n🔎 buscando:", codigoBase);
 
-    // Esperar a que el buscador del SGA esté listo tras estar logueado
     const input = page.locator('input:visible').first();
     await input.waitFor({ state: 'visible', timeout: 60000 });
 
     await input.fill('');
     await input.fill(codigoBase);
-
     await page.waitForTimeout(4000);
 
     const filas = page.locator('tr', { hasText: codigoBase });
@@ -108,4 +123,4 @@ http.createServer((req, res) => {
 
   console.log("\n✅ Bot terminado con éxito");
   await browser.close();
-})();
+}
