@@ -1,73 +1,31 @@
-const http = require('http');
 const { chromium } = require('playwright');
 
-const PORT = process.env.PORT || 10000;
-
-// Memoria temporal para guardar los resultados extraídos
-let ultimosResultados = { estado: "idle", datos: [], error: null };
-
-http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  // ENDPOINT 1: Consultar estado/resultados
-  if (url.pathname === '/resultados') {
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(ultimosResultados));
-    return;
-  }
-
-  // ENDPOINT 2: Iniciar proceso
-  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify({ ok: true, mensaje: "Bot iniciado en segundo plano." }));
-
-  // Iniciar Scraping en segundo plano
-  if (ultimosResultados.estado !== "procesando") {
-    ultimosResultados = { estado: "procesando", datos: [], error: null };
-    ejecutarScraper()
-      .then(res => { ultimosResultados = { estado: "finalizado", datos: res, error: null }; })
-      .catch(err => { ultimosResultados = { estado: "error", datos: [], error: err.message }; });
-  }
-
-}).listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Servidor activo en puerto ${PORT}`);
-});
-
 async function ejecutarScraper() {
-  console.log("🚀 Iniciando extracción en SGA...");
+  console.log("🚀 Bot iniciado en GitHub Actions...");
+
   const SHEETS_GET = process.env.SHEETS_GET;
+  const SHEETS_POST = process.env.SHEETS_POST;
+
   const res = await fetch(SHEETS_GET);
   const codigos = await res.json();
+  console.log("📥 Códigos a procesar desde Sheets:", codigos);
 
-  if (!codigos || codigos.length === 0) return [];
+  if (!codigos || codigos.length === 0) {
+    console.log("⚠️ No hay códigos para procesar.");
+    return;
+  }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 720 }
-  });
-
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
   const page = await context.newPage();
-  page.setDefaultTimeout(60000);
 
+  console.log("🌐 Navegando al SGA...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
   // Autenticación automática
   const passInput = page.locator('input[type="password"]');
   if (await passInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    console.log("🔑 Iniciando sesión...");
     await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(process.env.SGA_USER || '');
     await passInput.first().fill(process.env.SGA_PASS || '');
     await Promise.all([
@@ -76,37 +34,40 @@ async function ejecutarScraper() {
     ]);
   }
 
-  const resultados = [];
-
+  // Recorrido de búsqueda
   for (const codigoBase of codigos) {
+    console.log("🔎 Buscando código:", codigoBase);
     const input = page.locator('input:visible').first();
-    await input.waitFor({ state: 'visible', timeout: 60000 });
-
-    await input.fill('');
+    await input.waitFor({ state: 'visible' });
     await input.fill(codigoBase);
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(3000);
 
     const filas = page.locator('tr', { hasText: codigoBase });
     const count = await filas.count();
 
     for (let i = 0; i < count; i++) {
-      const fila = filas.nth(i);
-      const tds = fila.locator('td');
-      const columnas = await tds.count();
-
-      if (columnas === 0) continue;
+      const tds = filas.nth(i).locator('td');
+      if (await tds.count() === 0) continue;
 
       const codigo = (await tds.nth(1).innerText()).trim();
-      let confirmados = "0";
+      const confirmados = (await tds.count() > 11) ? (await tds.nth(11).innerText()).trim() : "0";
 
-      if (columnas > 11) {
-        confirmados = (await tds.nth(11).innerText()).trim();
-      }
+      console.log(`📤 Guardando en planilla: ${codigo} -> ${confirmados}`);
 
-      resultados.push({ codigo, confirmados });
+      await fetch(SHEETS_POST, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ codigo, confirmados }),
+        redirect: 'follow'
+      });
     }
   }
 
   await browser.close();
-  return resultados;
+  console.log("✅ Extracción finalizada con éxito.");
 }
+
+ejecutarScraper().catch(err => {
+  console.error("❌ Error en la ejecución:", err);
+  process.exit(1);
+});
