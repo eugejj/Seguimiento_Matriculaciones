@@ -3,6 +3,9 @@ const { chromium } = require('playwright');
 
 const PORT = process.env.PORT || 10000;
 
+// Memoria temporal para guardar los resultados extraídos
+let ultimosResultados = { estado: "idle", datos: [], error: null };
+
 http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -14,25 +17,33 @@ http.createServer(async (req, res) => {
     return;
   }
 
-  console.log("📩 Petición recibida. Ejecutando extracción...");
+  const url = new URL(req.url, `http://${req.headers.host}`);
 
-  try {
-    const resultados = await ejecutarScraper();
-    
-    // Devuelve los datos directamente al HTML en formato JSON
+  // ENDPOINT 1: Consultar estado/resultados
+  if (url.pathname === '/resultados') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ ok: true, datos: resultados }));
-  } catch (error) {
-    console.error("❌ Error:", error.message);
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: false, error: error.message }));
+    res.end(JSON.stringify(ultimosResultados));
+    return;
+  }
+
+  // ENDPOINT 2: Iniciar proceso
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify({ ok: true, mensaje: "Bot iniciado en segundo plano." }));
+
+  // Iniciar Scraping en segundo plano
+  if (ultimosResultados.estado !== "procesando") {
+    ultimosResultados = { estado: "procesando", datos: [], error: null };
+    ejecutarScraper()
+      .then(res => { ultimosResultados = { estado: "finalizado", datos: res, error: null }; })
+      .catch(err => { ultimosResultados = { estado: "error", datos: [], error: err.message }; });
   }
 
 }).listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Servidor listo escuchando en puerto ${PORT}`);
+  console.log(`🚀 Servidor activo en puerto ${PORT}`);
 });
 
 async function ejecutarScraper() {
+  console.log("🚀 Iniciando extracción en SGA...");
   const SHEETS_GET = process.env.SHEETS_GET;
   const res = await fetch(SHEETS_GET);
   const codigos = await res.json();
@@ -54,7 +65,7 @@ async function ejecutarScraper() {
 
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  // Autenticación
+  // Autenticación automática
   const passInput = page.locator('input[type="password"]');
   if (await passInput.isVisible({ timeout: 5000 }).catch(() => false)) {
     await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(process.env.SGA_USER || '');
