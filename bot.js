@@ -3,8 +3,7 @@ const { chromium } = require('playwright');
 
 const PORT = process.env.PORT || 10000;
 
-// 1. SERVIDOR HTTP LIGERO (Responde al instante para evitar 502 Bad Gateway)
-http.createServer((req, res) => {
+http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -15,38 +14,30 @@ http.createServer((req, res) => {
     return;
   }
 
-  // Responder 200 inmediatamente a Render y al HTML
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Bot iniciado correctamente en segundo plano.');
+  console.log("📩 Petición recibida. Ejecutando extracción...");
 
-  // Ejecutar scraper asincrónicamente sin bloquear la respuesta HTTP
-  console.log("📩 Petición recibida. Disparando scraper...");
-  ejecutarScraper().catch(err => console.error("❌ Error en scraper:", err.message));
+  try {
+    const resultados = await ejecutarScraper();
+    
+    // Devuelve los datos directamente al HTML en formato JSON
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: true, datos: resultados }));
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: error.message }));
+  }
 
 }).listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Servidor listo escuchando en puerto ${PORT}`);
 });
 
-// 2. LÓGICA DE EXTRACCIÓN Y ENVÍO A GOOGLE SHEETS
 async function ejecutarScraper() {
-  console.log("🚀 Iniciando proceso de Playwright...");
-
   const SHEETS_GET = process.env.SHEETS_GET;
-  const SHEETS_POST = process.env.SHEETS_POST;
-
-  if (!SHEETS_GET || !SHEETS_POST) {
-    console.error("❌ Falta configurar SHEETS_GET o SHEETS_POST en las Environment Variables.");
-    return;
-  }
-
   const res = await fetch(SHEETS_GET);
   const codigos = await res.json();
-  console.log("📥 Códigos cargados desde Google Sheets:", codigos);
 
-  if (!codigos || codigos.length === 0) {
-    console.log("⚠️ No hay códigos para procesar.");
-    return;
-  }
+  if (!codigos || codigos.length === 0) return [];
 
   const browser = await chromium.launch({
     headless: true,
@@ -61,27 +52,22 @@ async function ejecutarScraper() {
   const page = await context.newPage();
   page.setDefaultTimeout(60000);
 
-  console.log("🌐 Navegando al SGA...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  // Autenticación automática
+  // Autenticación
   const passInput = page.locator('input[type="password"]');
   if (await passInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log("🔑 Pantalla de login detectada. Autenticando...");
     await page.locator('input[type="text"], input[name="username"], input[name="user"]').first().fill(process.env.SGA_USER || '');
     await passInput.first().fill(process.env.SGA_PASS || '');
-    
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle' }),
       page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
     ]);
-    console.log("✅ Sesión iniciada correctamente.");
   }
 
-  // Búsqueda e impacto de datos
-  for (const codigoBase of codigos) {
-    console.log("\n🔎 Buscando:", codigoBase);
+  const resultados = [];
 
+  for (const codigoBase of codigos) {
     const input = page.locator('input:visible').first();
     await input.waitFor({ state: 'visible', timeout: 60000 });
 
@@ -91,13 +77,6 @@ async function ejecutarScraper() {
 
     const filas = page.locator('tr', { hasText: codigoBase });
     const count = await filas.count();
-
-    console.log(`📊 Filas encontradas para ${codigoBase}:`, count);
-
-    if (count === 0) {
-      console.log("⚠️ No se encontraron filas");
-      continue;
-    }
 
     for (let i = 0; i < count; i++) {
       const fila = filas.nth(i);
@@ -113,25 +92,10 @@ async function ejecutarScraper() {
         confirmados = (await tds.nth(11).innerText()).trim();
       }
 
-      console.log(`📤 Enviando a Sheets: ${codigo} -> ${confirmados}`);
-
-      try {
-        const postRes = await fetch(SHEETS_POST, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify({ codigo, confirmados }),
-          redirect: 'follow'
-        });
-
-        console.log("STATUS ENVÍO SHEETS:", postRes.status);
-      } catch (errPost) {
-        console.error("❌ Error enviando resultado a Sheets:", errPost.message);
-      }
+      resultados.push({ codigo, confirmados });
     }
-
-    await page.waitForTimeout(2000);
   }
 
-  console.log("\n✅ Bot terminado con éxito");
   await browser.close();
+  return resultados;
 }
