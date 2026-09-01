@@ -1,15 +1,28 @@
 const { chromium } = require('playwright');
 
 (async () => {
-  console.log('Iniciando navegador en Render...');
 
+  console.log("🚀 Bot iniciado en Render");
+
+  // 📥 LEER CÓDIGOS Y POSTEAR DESDE ENV
+  const SHEETS_GET = process.env.SHEETS_GET || "https://script.google.com/macros/s/AKfycbw5ReP1DrK1zW7Xjn9qJcWlVYivcz0-CxbN3ZAa3Kp6HiVYPMdpA3-XA3vHVMRq2Ste/exec";
+  const SHEETS_POST = process.env.SHEETS_POST || "https://script.google.com/macros/s/AKfycbw5ReP1DrK1zW7Xjn9qJcWlVYivcz0-CxbN3ZAa3Kp6HiVYPMdpA3-XA3vHVMRq2Ste/exec";
+
+  // 🔥 1. TRAER CÓDIGOS
+  const res = await fetch(SHEETS_GET);
+  const codigos = await res.json();
+
+  console.log("📥 códigos cargados:", codigos);
+
+  if (!codigos || codigos.length === 0) {
+    console.log("⚠️ No hay códigos para procesar.");
+    return;
+  }
+
+  // 🧠 2. ABRIR NAVEGADOR (Modo Cloud / Headless)
   const browser = await chromium.launch({
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled'
-    ]
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
 
   const context = await browser.newContext({
@@ -18,85 +31,96 @@ const { chromium } = require('playwright');
   });
 
   const page = await context.newPage();
+  page.setDefaultTimeout(60000); // 60s timeout para Render
 
-  // Extendemos el timeout por defecto a 60 segundos para evitar errores en la nube
-  page.setDefaultTimeout(60000);
+  console.log("🌐 Navegando al SGA...");
+  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  try {
-    // 1. Obtener los códigos pendientes desde Google Sheets
-    console.log('Obteniendo lista de códigos desde Google Sheets...');
-    const responseGet = await fetch(process.env.SHEETS_GET);
-    const codigos = await responseGet.json();
-    console.log('Códigos a procesar:', codigos);
-
-    if (!codigos || codigos.length === 0) {
-      console.log('No hay códigos para procesar.');
-      return;
-    }
-
-    // 2. Ingresar al SGA
-    console.log('Navegando al SGA...');
-    await page.goto('https://sga.tuinstitucion.edu.ar', { waitUntil: 'networkidle', timeout: 60000 });
-
-    // 3. Esperar que los campos de login estén totalmente visibles
-    console.log('Esperando el formulario de ingreso...');
-    await page.waitForSelector('input:visible', { state: 'visible', timeout: 60000 });
-
-    // Login usando credenciales de las variables de entorno
-    const usuario = process.env.SGA_USER;
-    const contrasena = process.env.SGA_PASS;
-
-    if (!usuario || !contrasena) {
-      throw new Error('Faltan configurar SGA_USER o SGA_PASS en las Variables de Entorno.');
-    }
-
-    console.log('Ingresando usuario y contraseña...');
-    await page.fill('input[type="text"], input[name="username"], input[name="user"], input:visible', usuario);
-    await page.fill('input[type="password"], input[name="password"], input:visible', contrasena);
-
+  // 🔐 MANEJO DE LOGIN EN NUBE (Si solicita credenciales)
+  const usuarioInput = page.locator('input[type="text"], input[name="username"], input[name="user"]').first();
+  if (await usuarioInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    console.log("🔑 Iniciando sesión en el SGA...");
+    await usuarioInput.fill(process.env.SGA_USER);
+    await page.locator('input[type="password"]').fill(process.env.SGA_PASS);
+    
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle' }),
-      page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar"), button:has-text("Iniciar")')
+      page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
     ]);
+    console.log("✅ Sesión iniciada.");
+  }
 
-    console.log('Login exitoso. Iniciando búsqueda de códigos...');
+  // 🔁 3. LOOP DE CÓDIGOS
+  for (const codigoBase of codigos) {
 
-    // 4. Bucle para procesar cada código en el SGA
-    const resultados = [];
-    for (const codigo of codigos) {
-      console.log(`Buscando datos para el código: ${codigo}`);
+    console.log("\n🔎 buscando:", codigoBase);
 
-      // Esperar a que el buscador del SGA esté listo
-      await page.waitForSelector('input:visible', { state: 'visible', timeout: 60000 });
-      await page.fill('input:visible', codigo);
-      await page.keyboard.press('Enter');
+    // Esperar a que el buscador esté listo y visible
+    const input = page.locator('input:visible').first();
+    await input.waitFor({ state: 'visible', timeout: 60000 });
+    
+    // Limpiar e ingresar el código
+    await input.fill('');
+    await input.fill(codigoBase);
 
-      await page.waitForTimeout(3000); // Pequeña pausa para asegurar la carga de la tabla/datos
+    // 🔥 esperar render del filtro
+    await page.waitForTimeout(4000);
 
-      // Captura del resultado (ajusta según los datos que extraes del SGA)
-      const inscriptos = await page.innerText('body');
-
-      resultados.push({
-        codigo: codigo,
-        estado: 'Procesado',
-        detalle: inscriptos.substring(0, 100) // snippet de resultado
-      });
-    }
-
-    // 5. Enviar resultados consolidados a Google Sheets
-    console.log('Enviando resultados a Google Sheets...');
-    await fetch(process.env.SHEETS_POST, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(resultados)
+    // 🔥 buscar filas
+    const filas = page.locator('tr', {
+      hasText: codigoBase
     });
 
-    console.log('Proceso completado con éxito.');
+    const count = await filas.count();
 
-  } catch (error) {
-    console.error('Error durante la ejecución del bot:', error.message);
-  } finally {
-    await browser.close();
-    console.log('Navegador cerrado.');
+    console.log(`📊 filas encontradas para ${codigoBase}:`, count);
+
+    if (count === 0) {
+      console.log("⚠️ No se encontraron filas");
+      continue;
+    }
+
+    // 🔁 4. recorrer todas las variantes (C0766-01, etc.)
+    for (let i = 0; i < count; i++) {
+
+      const fila = filas.nth(i);
+      const tds = fila.locator('td');
+
+      const columnas = await tds.count();
+
+      if (columnas === 0) continue;
+
+      const codigo = (await tds.nth(1).innerText()).trim();
+
+      let confirmados = "0";
+
+      if (columnas > 11) {
+        confirmados = (await tds.nth(11).innerText()).trim();
+      }
+
+      console.log({ codigo, confirmados });
+
+      // 📤 enviar a Sheets
+      const postRes = await fetch(SHEETS_POST, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          codigo,
+          confirmados
+        })
+      });
+
+      console.log("STATUS:", postRes.status);
+      console.log("RESP:", await postRes.text());
+    }
+
+    await page.waitForTimeout(2000);
   }
+
+  console.log("\n✅ Bot terminado");
+
+  await browser.close();
+
 })();
