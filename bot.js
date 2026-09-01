@@ -26,27 +26,31 @@ const { chromium } = require('playwright');
   const page = await context.newPage();
 
   // 🔑 3. LOGIN EN SGA
-  console.log("🔑 Iniciando sesión...");
-  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/login');
-  await page.waitForLoadState('networkidle');
+  console.log("🔑 Yendo a pantalla de login...");
+  await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/login', { waitUntil: 'networkidle' });
 
-  // Seleccionar campos de forma directa y flexible
-  const inputs = page.locator('input:visible');
-  await inputs.nth(0).fill(SGA_USER || '');
-  await inputs.nth(1).fill(SGA_PASS || '');
+  console.log("📍 URL actual:", page.url());
+
+  // Esperar a que los elementos DOM existan
+  const inputUsuario = page.locator('input').first();
+  await inputUsuario.waitFor({ state: 'attached', timeout: 30000 });
+
+  // Rellenar datos
+  await page.locator('input').nth(0).fill(SGA_USER || '');
+  await page.locator('input[type="password"]').fill(SGA_PASS || '');
 
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'networkidle' }).catch(() => {}),
-    page.click('button[type="submit"], input[type="submit"], button:has-text("Ingresar")')
+    page.locator('button, input[type="submit"]').first().click()
   ]);
 
-  console.log("✅ Sesión iniciada.");
+  console.log("✅ Sesión iniciada. URL posterior:", page.url());
 
-  // Ir a propuestas tras el login
+  // Ir a propuestas
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas');
   await page.waitForLoadState('networkidle');
 
-  // 🔁 4. LOOP DE CÓDIGOS (TU CÓDIGO EXACTO LOCAL)
+  // 🔁 4. LOOP DE CÓDIGOS
   for (const codigoBase of codigos) {
     console.log("\n🔎 buscando:", codigoBase);
 
