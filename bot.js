@@ -29,7 +29,10 @@ const fs = require('fs');
   console.log("🔑 Ingresando a la plataforma...");
   await page.goto('https://sga-escuelademaestros.buenosaires.gob.ar/capacitadores/propuestas', { waitUntil: 'networkidle' });
 
-  // 🔁 3. LOOP DE CÓDIGOS (TU LÓGICA ORIGINAL)
+  // Lista para acumular las filas extraídas
+  const resultadosAcumulados = [];
+
+  // 🔁 3. LOOP DE CÓDIGOS
   for (const codigoBase of codigos) {
     console.log("\n🔎 buscando:", codigoBase);
 
@@ -65,18 +68,28 @@ const fs = require('fs');
 
       console.log({ codigo, confirmados });
 
-      // 📤 ENVIAR A SHEETS
-      const postRes = await fetch(SHEETS_POST, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        redirect: 'follow',
-        body: JSON.stringify({ codigo, confirmados })
-      });
-
-      console.log("STATUS:", postRes.status);
+      // Guardamos la fila en la lista acumulada
+      resultadosAcumulados.push({ codigo, confirmados });
     }
 
     await page.waitForTimeout(2000);
+  }
+
+  // 📤 4. ENVIAR EL LOTE COMPLETO A GOOGLE SHEETS
+  if (resultadosAcumulados.length > 0) {
+    console.log(`\n🚀 Enviando ${resultadosAcumulados.length} resultados a Google Sheets...`);
+    
+    const postRes = await fetch(SHEETS_POST, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      redirect: 'follow',
+      body: JSON.stringify(resultadosAcumulados)
+    });
+
+    console.log("STATUS POST:", postRes.status);
+    console.log("RESPUESTA SCRIPT:", await postRes.text());
+  } else {
+    console.log("⚠️ No se encontraron datos para enviar.");
   }
 
   console.log("\n✅ Bot terminado");
