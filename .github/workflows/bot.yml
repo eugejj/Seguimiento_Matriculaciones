@@ -29,4 +29,5 @@ jobs:
           STORAGE_STATE: ${{ secrets.STORAGE_STATE }}
           SHEETS_GET: ${{ secrets.SHEETS_GET }}
           SHEETS_POST: ${{ secrets.SHEETS_POST }}
+          GH_TOKEN: ${{ secrets.BOT }}
         run: node bot.js
