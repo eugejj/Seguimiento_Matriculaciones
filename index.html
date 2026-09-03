@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor del Bot SGA</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+    h1 { color: #1a73e8; margin-top: 0; }
+    p { color: #666; font-size: 14px; }
+    
+    .panel-actions { display: flex; gap: 10px; margin-bottom: 20px; }
+    button { background-color: #1a73e8; color: white; border: none; padding: 12px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 14px; }
+    button:hover { background-color: #1557b0; }
+    button.btn-ejecutar { background-color: #28a745; }
+    button.btn-ejecutar:hover { background-color: #218838; }
+    
+    .status-bar { padding: 12px 15px; border-radius: 4px; background-color: #e8f0fe; color: #1967d2; font-size: 14px; font-weight: 500; margin-bottom: 20px; }
+    
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #e0e0e0; padding: 12px; text-align: left; font-size: 14px; }
+    th { background-color: #f8f9fa; color: #495057; font-weight: 600; }
+    tr:nth-child(even) { background-color: #f9f9f9; }
+    
+    .badge-success { background-color: #d4edda; color: #155724; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>Monitor del Bot SGA</h1>
+    <p>Lectura automática de cursos en fecha. Ignora "pob cerrada" y fuera de término.</p>
+
+    <div class="panel-actions">
+      <button onclick="cargarCursosActivos()">📋 1. Ver Cursos en Fecha</button>
+      <button class="btn-ejecutar" onclick="ejecutarBotSGA()">🤖 2. Ejecutar Bot en SGA</button>
+    </div>
+
+    <div id="status" class="status-bar">Haz clic en "1. Ver Cursos en Fecha" para consultar la lista...</div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Código del Curso</th>
+          <th>Estado de Inscripción</th>
+        </tr>
+      </thead>
+      <tbody id="tabla-body">
+        <tr>
+          <td colspan="2" style="text-align: center; color: #999;">Presiona "Ver Cursos en Fecha" para cargar.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    // 🔗 CONFIGURACIÓN DE CONEXIÓN
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzp-jqq8O7yhevZSxo034L59tJl5paEayUR6AG_s661LRmLF_0h-UdnjJ7u-StBp_6H/exec";
+    
+    const GH_USER = "eugejj";
+    const GH_REPO = "Seguimiento_Matriculaciones";
+    const GH_WORKFLOW = "bot.yml"; 
+    const GH_TOKEN = "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"; // 👈 Acá irá el token
+
+    let cursosParaProcesar = [];
+
+    // 1. OBTENER CÓDIGOS DESDE APPS SCRIPT
+    async function cargarCursosActivos() {
+      actualizarEstado("Leyendo códigos y verificando fechas...");
+      const tbody = document.getElementById("tabla-body");
+      tbody.innerHTML = `<tr><td colspan="2" style="text-align: center;">Cargando...</td></tr>`;
+
+      try {
+        const res = await fetch(WEB_APP_URL, { redirect: 'follow' });
+        cursosParaProcesar = await res.json();
+
+        tbody.innerHTML = "";
+
+        if (!cursosParaProcesar || cursosParaProcesar.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="2" style="text-align: center; color: red;">No hay cursos vigentes para procesar hoy.</td></tr>`;
+          actualizarEstado("0 cursos vigentes encontrados.");
+          return;
+        }
+
+        cursosParaProcesar.forEach(item => {
+          const codigo = typeof item === 'object' ? item.codigo : item;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><strong>${codigo}</strong></td>
+            <td><span class="badge-success">En Fecha / Inscripción Abierta</span></td>
+          `;
+          tbody.appendChild(tr);
+        });
+
+        actualizarEstado(`Se cargaron ${cursosParaProcesar.length} curso(s) listos para buscar en el SGA.`);
+
+      } catch (err) {
+        actualizarEstado("Error al obtener datos: " + err.message);
+      }
+    }
+
+    // 2. DISPARAR BOT EN GITHUB ACTIONS
+    async function ejecutarBotSGA() {
+      if (cursosParaProcesar.length === 0) {
+        alert("Primero carga los cursos presionando el botón 1.");
+        return;
+      }
+
+      actualizarEstado("🚀 Enviando orden a GitHub Actions... Iniciando bot en la nube.");
+
+      try {
+        const res = await fetch(`https://api.github.com/repos/${GH_USER}/${GH_REPO}/actions/workflows/${GH_WORKFLOW}/dispatches`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GH_TOKEN}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ ref: 'main' })
+        });
+
+        if (res.ok || res.status === 204) {
+          actualizarEstado("✅ ¡Bot iniciado con éxito en GitHub Actions!");
+          alert("🎉 ¡ORDEN ENVIADA CON ÉXITO!\n\nEl bot de GitHub Actions ya empezó a procesar los cursos en segundo plano.");
+        } else {
+          actualizarEstado("❌ Error al activar GitHub Actions. Status: " + res.status);
+          alert("Error de autenticación con GitHub. Revisa que el Token esté bien pegado.");
+        }
+
+      } catch (err) {
+        actualizarEstado("⚠️ Error de comunicación: " + err.message);
+        alert("Error de comunicación: " + err.message);
+      }
+    }
+
+    function actualizarEstado(txt) {
+      document.getElementById("status").innerText = txt;
+    }
+  </script>
+</body>
+</html>
